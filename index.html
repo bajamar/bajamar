@@ -105,6 +105,8 @@ input::placeholder{color:var(--muted);}
 .team-blue .team-total{color:rgba(77,166,255,0.7);}
 .player-chip{display:inline-flex;align-items:center;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:8px;padding:5px 10px;margin:3px;font-size:13px;font-weight:500;cursor:grab;transition:all .15s;user-select:none;touch-action:none;}
 .player-chip:hover{background:rgba(255,255,255,0.1);}
+.player-chip.chip-selected{background:rgba(0,200,117,0.2);border-color:var(--green);color:var(--green);cursor:pointer;}
+.chips-zone.zone-ready{outline:2px dashed var(--green);background:rgba(0,200,117,0.05);}
 .player-chip.dragging{opacity:0.4;cursor:grabbing;}
 .chips-zone{min-height:44px;border-radius:8px;transition:background .15s;padding:2px;}
 .chips-zone.drag-over{background:rgba(255,255,255,0.05);outline:1px dashed var(--border2);}
@@ -216,6 +218,7 @@ input::placeholder{color:var(--muted);}
               <div class="team-total" id="team-a-total"></div>
             </div>
             <div class="chips-zone" id="zone-a"
+              onclick="onZoneClick('A')"
               ondragover="onDragOver(event)" ondrop="onDrop(event,'A')" ondragleave="onDragLeave(event)"></div>
           </div>
           <div class="swap-row">
@@ -227,6 +230,7 @@ input::placeholder{color:var(--muted);}
               <div class="team-total" id="team-b-total"></div>
             </div>
             <div class="chips-zone" id="zone-b"
+              onclick="onZoneClick('B')"
               ondragover="onDragOver(event)" ondrop="onDrop(event,'B')" ondragleave="onDragLeave(event)"></div>
           </div>
         </div>
@@ -317,7 +321,6 @@ let starInputVal = 3, starEditVal = 3;
 let editingId   = null;
 let dragId      = null;
 let unlocked    = false;
-let touchDragId = null, touchClone = null;
 
 // ── TOAST ──
 function toast(msg, type='success'){
@@ -533,6 +536,8 @@ window.generarEquipos=()=>{
 
 function tTotal(t){ return Math.round(t.reduce((s,p)=>s+p.estrellas,0)*10)/10; }
 
+let selectedChipId = null; // tap-to-move state
+
 function renderTeams(){
   document.getElementById('team-a-name').textContent=teamAName;
   document.getElementById('team-b-name').textContent=teamBName;
@@ -542,17 +547,43 @@ function renderTeams(){
   document.getElementById('team-b-total').textContent='★ '+tTotal(teamB);
   document.getElementById('zone-a').innerHTML=teamA.map(chipHtml).join('');
   document.getElementById('zone-b').innerHTML=teamB.map(chipHtml).join('');
-  bindTouchDrag();
+  // highlight zones when a chip is selected
+  document.getElementById('zone-a').classList.toggle('zone-ready', !!selectedChipId);
+  document.getElementById('zone-b').classList.toggle('zone-ready', !!selectedChipId);
 }
 
 function chipHtml(p){
-  return `<span class="player-chip" draggable="true" data-id="${p.id}"
-    ondragstart="onDragStart(event,'${p.id}')" ondragend="onDragEnd(event)">${esc(p.nombre)}</span>`;
+  const isSel = selectedChipId===p.id;
+  return `<span class="player-chip${isSel?' chip-selected':''}" data-id="${p.id}"
+    draggable="true"
+    ondragstart="onDragStart(event,'${p.id}')" ondragend="onDragEnd(event)"
+    onclick="onChipClick('${p.id}')">${esc(p.nombre)}${isSel?' ✕':''}</span>`;
 }
 
-// mouse drag
+// ── tap-to-move (mobile friendly, no scroll block) ──
+window.onChipClick=(id)=>{
+  if(selectedChipId===id){
+    // deselect
+    selectedChipId=null; renderTeams(); return;
+  }
+  if(selectedChipId){
+    // move previously selected chip to the team of the tapped chip
+    const targetTeam = teamA.find(j=>j.id===id) ? 'A' : 'B';
+    moveChip(selectedChipId, targetTeam);
+    return;
+  }
+  // first tap: select this chip
+  selectedChipId=id; renderTeams();
+};
+
+window.onZoneClick=(team)=>{
+  if(!selectedChipId) return;
+  moveChip(selectedChipId, team);
+};
+
+// ── desktop mouse drag (only active on non-touch) ──
 window.onDragStart=(e,id)=>{ dragId=id; e.target.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; };
-window.onDragEnd=(e)=>e.target.classList.remove('dragging');
+window.onDragEnd=(e)=>{ e.target.classList.remove('dragging'); };
 window.onDragOver=(e)=>{ e.preventDefault(); e.currentTarget.classList.add('drag-over'); };
 window.onDragLeave=(e)=>e.currentTarget.classList.remove('drag-over');
 window.onDrop=(e,team)=>{ e.preventDefault(); e.currentTarget.classList.remove('drag-over'); moveChip(dragId,team); dragId=null; };
@@ -561,50 +592,9 @@ function moveChip(id,to){
   if(!id) return;
   const p=jugadores.find(j=>j.id===id); if(!p) return;
   teamA=teamA.filter(j=>j.id!==id); teamB=teamB.filter(j=>j.id!==id);
-  (to==='A'?teamA:teamB).push(p); renderTeams();
-}
-
-// touch drag — delegación en document para evitar listeners duplicados al re-renderizar
-let _touchBound=false;
-function bindTouchDrag(){
-  if(_touchBound) return; _touchBound=true;
-  document.addEventListener('touchstart',e=>{
-    const chip=e.target.closest('.player-chip');
-    if(chip) tStart(e,chip);
-  },{passive:false});
-  document.addEventListener('touchmove',tMove,{passive:false});
-  document.addEventListener('touchend',tEnd,{passive:false});
-}
-function tStart(e,chip){
-  chip=chip||e.currentTarget;
-  touchDragId=chip.dataset.id;
-  const r=chip.getBoundingClientRect();
-  touchClone=chip.cloneNode(true);
-  Object.assign(touchClone.style,{position:'fixed',left:r.left+'px',top:r.top+'px',width:r.width+'px',opacity:'.75',pointerEvents:'none',zIndex:'9999',borderRadius:'8px'});
-  document.body.appendChild(touchClone);
-  chip.style.opacity='.25';
-}
-function tMove(e){
-  e.preventDefault(); if(!touchClone) return;
-  const t=e.touches[0];
-  touchClone.style.left=(t.clientX-44)+'px'; touchClone.style.top=(t.clientY-18)+'px';
-  document.querySelectorAll('.chips-zone').forEach(z=>z.classList.remove('drag-over'));
-  const zone=document.elementFromPoint(t.clientX,t.clientY)?.closest('.chips-zone');
-  if(zone) zone.classList.add('drag-over');
-}
-function tEnd(e){
-  // Remove clone FIRST so elementFromPoint finds the actual zone beneath
-  if(touchClone){ touchClone.remove(); touchClone=null; }
-  document.querySelectorAll('.chips-zone').forEach(z=>z.classList.remove('drag-over'));
-  const t=e.changedTouches[0];
-  const zone=document.elementFromPoint(t.clientX,t.clientY)?.closest('.chips-zone');
-  const id=touchDragId; touchDragId=null;
-  if(zone && id){
-    moveChip(id, zone.id==='zone-a'?'A':'B');
-  } else {
-    // No valid drop target — re-render to clear ghost opacity
-    renderTeams();
-  }
+  (to==='A'?teamA:teamB).push(p);
+  selectedChipId=null;
+  renderTeams();
 }
 
 window.swapNames=()=>{ [teamAName,teamBName]=[teamBName,teamAName]; teamAisRed=!teamAisRed; renderTeams(); };
