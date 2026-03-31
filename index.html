@@ -564,21 +564,25 @@ function moveChip(id,to){
   (to==='A'?teamA:teamB).push(p); renderTeams();
 }
 
-// touch drag
+// touch drag — delegación en document para evitar listeners duplicados al re-renderizar
+let _touchBound=false;
 function bindTouchDrag(){
-  document.querySelectorAll('.player-chip').forEach(chip=>{
-    chip.addEventListener('touchstart',tStart,{passive:false});
-    chip.addEventListener('touchmove', tMove, {passive:false});
-    chip.addEventListener('touchend',  tEnd,  {passive:false});
-  });
+  if(_touchBound) return; _touchBound=true;
+  document.addEventListener('touchstart',e=>{
+    const chip=e.target.closest('.player-chip');
+    if(chip) tStart(e,chip);
+  },{passive:false});
+  document.addEventListener('touchmove',tMove,{passive:false});
+  document.addEventListener('touchend',tEnd,{passive:false});
 }
-function tStart(e){
-  touchDragId=e.currentTarget.dataset.id;
-  const r=e.currentTarget.getBoundingClientRect();
-  touchClone=e.currentTarget.cloneNode(true);
+function tStart(e,chip){
+  chip=chip||e.currentTarget;
+  touchDragId=chip.dataset.id;
+  const r=chip.getBoundingClientRect();
+  touchClone=chip.cloneNode(true);
   Object.assign(touchClone.style,{position:'fixed',left:r.left+'px',top:r.top+'px',width:r.width+'px',opacity:'.75',pointerEvents:'none',zIndex:'9999',borderRadius:'8px'});
   document.body.appendChild(touchClone);
-  e.currentTarget.style.opacity='.25';
+  chip.style.opacity='.25';
 }
 function tMove(e){
   e.preventDefault(); if(!touchClone) return;
@@ -589,13 +593,18 @@ function tMove(e){
   if(zone) zone.classList.add('drag-over');
 }
 function tEnd(e){
-  touchClone?.remove(); touchClone=null;
-  document.querySelectorAll('.player-chip').forEach(c=>c.style.opacity='');
+  // Remove clone FIRST so elementFromPoint finds the actual zone beneath
+  if(touchClone){ touchClone.remove(); touchClone=null; }
   document.querySelectorAll('.chips-zone').forEach(z=>z.classList.remove('drag-over'));
   const t=e.changedTouches[0];
   const zone=document.elementFromPoint(t.clientX,t.clientY)?.closest('.chips-zone');
-  if(zone) moveChip(touchDragId, zone.id==='zone-a'?'A':'B');
-  touchDragId=null;
+  const id=touchDragId; touchDragId=null;
+  if(zone && id){
+    moveChip(id, zone.id==='zone-a'?'A':'B');
+  } else {
+    // No valid drop target — re-render to clear ghost opacity
+    renderTeams();
+  }
 }
 
 window.swapNames=()=>{ [teamAName,teamBName]=[teamBName,teamAName]; teamAisRed=!teamAisRed; renderTeams(); };
